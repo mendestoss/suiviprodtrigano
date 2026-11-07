@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Trigano – Suivi de lancements</title>
-
+<link rel="icon" href="logo.png">
 <style>
 :root{--red:#dc0028;--red2:#b30020;--ink:#1d1f24;--mut:#6b7078;--line:#dfe2e7;--bg:#eef0f3;--card:#fff;--ok:#2e7d32;--okb:#e3f3e4;--ko:#c62828;--kob:#fde7e7;--or:#c77700;--orb:#fff1d9;--bl:#1e4a9c;--blb:#e4ecfb}
 *{box-sizing:border-box}
@@ -99,13 +99,6 @@ input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid 
  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 @media(prefers-reduced-motion:no-preference){.bar i{transition:width .4s}}
-.token-top{margin-left:auto;background:#fff;color:#a90020;border:0;border-radius:6px;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer}
-header.top .who{margin-left:0}
-.token-panel{position:relative;z-index:6;max-width:450px;margin:12px auto;padding:15px;background:#fff;border:2px solid #dc0028;border-radius:9px;box-shadow:0 6px 18px #0002}
-.token-panel[hidden]{display:none}
-.token-panel p{font-size:13px;color:#6b7078}
-.token-panel .actions{gap:6px}.token-panel .btn{font-size:12px;padding:8px}
-.token-panel small{color:#a11}
 </style>
 </head>
 <body>
@@ -120,68 +113,16 @@ const REPO = "mendestoss/suiviprodtrigano"; // compte/nom-du-dépôt
 const BRANCH = "main";
 const DEMO = false; // true = aperçu local sans GitHub
 const CONFIGURED = true;
-// ATTENTION : ce token sera public si le fichier est publié sur GitHub Pages.
-const SHARED_GITHUB_TOKEN = ""; // token partagé publié via le bouton en haut à droite
-/* ====== 2) UTILISATEURS ====== */
-const ADMIN_USER = "Anthony Mendes";
+/* Comptes validés par l’administrateur */
 const USERS = ["Jean Christophe Ménage","Johann Le Berre","Émilien Lecomte","Anthony Mendes","Brandon Dulompont"];
 
 const MOTIFS = {manquant:"Manquant",reparation:"Réparation",reprise:"Reprise parc",qualite:"Qualité"};
 const TYPES = {menuiserie:"Menuiserie",meuble:"Meuble"};
-let S = {user:null,visitor:false,token:"",etag:"",line:6,launches:[],cur:null,err:"",ready:true,busy:0};
+let S = {user:null,visitor:false,admin:false,token:"",etag:"",line:6,launches:[],cur:null,err:"",ready:true,busy:0};
 
 const $ = s => document.querySelector(s);
-const getToken = () => localStorage.getItem("trg_token") || SHARED_GITHUB_TOKEN;
-function tokenPanel(){
-  const current=getToken();
-  return `<div id="tokenPanel" class="token-panel" hidden><b>Token GitHub partagé</b><p>Renseigne ton token, puis publie-le pour que tous les utilisateurs en profitent après actualisation.</p><input id="tokenInput" type="password" placeholder="ghp_... ou github_pat_..." autocomplete="off" value="${esc(current)}"><div class="actions"><button class="btn" type="button" data-act="token-save">Enregistrer sur cet appareil</button><button class="btn alt" type="button" data-act="token-publish">Publier pour tous</button></div><div id="tokenMessage" class="err"></div><small>Attention : publier pour tous inscrit le token dans le HTML public de GitHub.</small></div>`;
-}
-async function publishToken(token){
-  const url=`https://api.github.com/repos/${REPO}/contents/index.html`;
-  const headers={Authorization:"Bearer "+token,Accept:"application/vnd.github+json","Content-Type":"application/json"};
-  const r=await fetch(url+"?ref="+encodeURIComponent(BRANCH),{headers,cache:"no-store"});
-  if(!r.ok)throw new Error("Lecture index.html : HTTP "+r.status);
-  const file=await r.json();
-  const source=dec(file.content);
-  const updated=source.replace(/const SHARED_GITHUB_TOKEN = "[^"]*";/,`const SHARED_GITHUB_TOKEN = ${JSON.stringify(token)};`);
-  if(updated===source && !source.includes(`const SHARED_GITHUB_TOKEN = ${JSON.stringify(token)};`))throw new Error("Configuration introuvable dans index.html");
-  const w=await fetch(url,{method:"PUT",headers,body:JSON.stringify({message:"Configuration du token partagé",content:enc(updated),sha:file.sha,branch:BRANCH})});
-  if(!w.ok)throw new Error("Publication : HTTP "+w.status);
-}
-
-// Codes individuels stockés dans access.json (empreintes SHA-256, jamais les codes en clair).
-const ACCESS_URL = `https://api.github.com/repos/${REPO}/contents/access.json`;
-async function codeHash(code){
-  const bytes=new TextEncoder().encode(code);
-  const digest=await crypto.subtle.digest("SHA-256",bytes);
-  return Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,"0")).join("");
-}
-async function loadAccess(token){
-  const r=await fetch(ACCESS_URL+"?ref="+encodeURIComponent(BRANCH),{headers:{Accept:"application/vnd.github+json",...(token?{Authorization:"Bearer "+token}:{})},cache:"no-store"});
-  if(r.status===404)return {codes:{},sha:null};
-  if(!r.ok)throw new Error("Lecture des codes : HTTP "+r.status);
-  const j=await r.json();return {codes:JSON.parse(dec(j.content)).codes||{},sha:j.sha};
-}
-async function saveAccess(user,code){
-  const token=getToken();if(!token)throw new Error("Token GitHub manquant");
-  const hash=await codeHash(code);
-  for(let attempt=0;attempt<5;attempt++){
-    const {codes,sha}=await loadAccess(token);
-    codes[user]=hash;
-    const body={message:"Modification du code d'accès : "+user,content:enc(JSON.stringify({codes},null,2)),branch:BRANCH};
-    if(sha)body.sha=sha;
-    const r=await fetch(ACCESS_URL,{method:"PUT",headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json","Content-Type":"application/json"},body:JSON.stringify(body)});
-    if(r.ok)return;
-    if(r.status!==409&&r.status!==422)throw new Error("Enregistrement : HTTP "+r.status);
-  }
-  throw new Error("Conflit d'enregistrement, réessaie");
-}
-function codesPanel(){
-  if(S.user!==ADMIN_USER||S.visitor)return "";
-  return `<div id="codesPanel" class="panel" hidden><h2>Gestion des codes d'accès</h2><p>Définis ou remplace le code de chaque compte. Un code est nécessaire pour se connecter dès qu'il est défini.</p>${USERS.map((u,i)=>`<form data-form="code" class="form" style="margin:12px 0;border-bottom:1px solid var(--line);padding-bottom:12px"><label class="f">${esc(u)}<input name="p" type="password" minlength="4" required placeholder="Nouveau code (4 caractères minimum)" autocomplete="new-password"></label><input type="hidden" name="u" value="${esc(u)}"><button class="btn" type="submit">Enregistrer le code</button></form>`).join("")}<p id="codesMessage" role="status"></p></div>`;
-}
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const today = () => new Date().toISOString().slice(0,10);
+const today = () => {const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`};
 const fd = d => d ? d.split("-").reverse().join("/") : "—";
 const fts = t => new Date(t).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
 function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display="none",2600)}
@@ -197,10 +138,16 @@ function stats(L){
 function qualTxt(x){return x.q==="com"?"Com":x.q==="pc"?"Pas com"+(x.m?" – "+MOTIFS[x.m]:""):"—"}
 function fmTxt(x){return x.f==="sans"?"Sans":x.f==="avec"?"Avec"+((x.t||[]).length?" – "+x.t.map(k=>TYPES[k]).join(", "):""):"—"}
 
-/* ---------- Données : data.json dans le dépôt GitHub ---------- */
-const GH="https://api.github.com/repos/"+REPO+"/contents/data.json";
-const enc=s=>btoa(unescape(encodeURIComponent(s))), dec=b=>decodeURIComponent(escape(atob(b.replace(/\n/g,""))));
-const hdr=raw=>({Accept:raw?"application/vnd.github.raw+json":"application/vnd.github+json",...(S.token?{Authorization:"Bearer "+S.token}:{})});
+/* API PHP alwaysdata + MySQL CloudFive */
+const API_BASE = "https://mendestoss.alwaysdata.net";
+const API = API_BASE.replace(/\/$/,"");
+const apiHeaders = () => ({"Content-Type":"application/json",...(S.token?{Authorization:"Bearer "+S.token}:{})});
+async function api(path, options={}){
+  const route = path.replace(/^\/api\//, "");
+  const r=await fetch(API+"/api/index.php?route="+encodeURIComponent(route),{...options,headers:{...apiHeaders(),...(options.headers||{})},cache:"no-store"});
+  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||("HTTP "+r.status))}
+  return r.json();
+}
 const hist=(L,o,a)=>{L.hist=(L.hist||[]).concat({t:o.t,u:o.u,a}).slice(-400)};
 function applyOp(D,o){
   const L=D.find(l=>l.id===o.id);
@@ -210,69 +157,42 @@ function applyOp(D,o){
   else if(o.type==="delete")return D.filter(l=>l.id!==o.id);
   return D;
 }
-const opTxt=o=>o.type==="delete"?`supprime le lancement ${o.num}`:o.type==="create"?`crée le lancement ${o.launch.num}`:o.type==="patch"?"modifie un châssis":"journal";
-
-async function pull(){ // lecture avec ETag : une réponse 304 ne coûte rien
-  if(DEMO)return false;
-  const h=hdr(true); if(S.etag)h["If-None-Match"]=S.etag;
-  const r=await fetch(GH+"?ref="+BRANCH,{headers:h,cache:"no-store"});
-  if(r.status===304)return false;
-  if(r.status===404){S.etag="";S.launches=[];return true}
-  if(!r.ok)throw new Error("lecture "+r.status);
-  S.etag=r.headers.get("ETag")||"";
-  const d=await r.json();
+async function pull(){
+  const d=await api("/api/data");
+  const next=JSON.stringify(d.launches||[]);
+  if(next===JSON.stringify(S.launches))return false;
   S.launches=(d.launches||[]).sort((a,b)=>b.createdAt-a.createdAt);
   if(S.cur&&!S.launches.find(l=>l.id===S.cur))S.cur=null;
   return true;
-}
-async function commit(ops){ // relit la dernière version, applique les changements, enregistre
-  for(let k=0;k<5;k++){
-    const r=await fetch(GH+"?ref="+BRANCH,{headers:hdr(false),cache:"no-store"});
-    let D=[],sha;
-    if(r.status===200){const j=await r.json();sha=j.sha;D=JSON.parse(dec(j.content)).launches||[]}
-    else if(r.status!==404)throw new Error(r.status===401||r.status===403?"auth":"lecture "+r.status);
-    ops.forEach(o=>{D=applyOp(D,o)});
-    const body={message:`${ops[0].u} : ${ops.map(opTxt).join(", ")}`.slice(0,200),content:enc(JSON.stringify({launches:D},null,1)),branch:BRANCH};
-    if(sha)body.sha=sha;
-    const w=await fetch(GH,{method:"PUT",headers:{...hdr(false),"Content-Type":"application/json"},body:JSON.stringify(body)});
-    if(w.ok)return;
-    if(w.status===409||w.status===422)continue;
-    throw new Error(w.status===401||w.status===403||w.status===404?"auth":"écriture "+w.status);
-  }
-  throw new Error("conflit, réessaie");
 }
 let pend=[],flushing=false;
 function send(o){
   if(S.visitor||!S.user)return;
   o.u=S.user;o.t=Date.now();
-  S.launches=applyOp(S.launches,o);render();
-  if(DEMO){try{localStorage.setItem("trgdemo",JSON.stringify(S.launches))}catch(e){}return}
-  pend.push(o);S.busy++;
-  if(!flushing)flush();
+  pend.push(o);S.busy++;if(!flushing)flush();
 }
 async function flush(){
   flushing=true;
   while(pend.length){
     const ops=pend.splice(0);
-    try{await commit(ops)}
-    catch(e){if(e.message==="auth"){toast("Ce code n’a pas le droit d’écrire sur le dépôt");logout()}else toast("Échec de l’enregistrement : "+e.message)}
-    S.busy-=ops.length;
+    try{const d=await api("/api/ops",{method:"POST",body:JSON.stringify({ops})});S.launches=d.launches||[];toast("Enregistré et synchronisé")}
+    catch(e){pend.unshift(...ops);S.err="Enregistrement impossible : "+e.message;toast(S.err);S.busy=Math.max(0,S.busy-ops.length);break}
+    S.busy=Math.max(0,S.busy-ops.length);
+    render();
   }
   flushing=false;
-  S.etag="";try{await pull()}catch(e){}render();
 }
-function logout(expired){localStorage.removeItem("trg");S.visitor=false;S.user=null;S.token="";S.etag="";S.cur=null;S.launches=[];S.err=expired===true?"Session expirée, reconnecte-toi.":"";render()}
+function logout(expired){sessionStorage.removeItem("trg_session");S.visitor=false;S.admin=false;S.user=null;S.token="";S.cur=null;S.launches=[];S.err=expired===true?"Session expirée, reconnecte-toi.":"";render()}
 async function poll(){
   if((!S.user&&!S.visitor)||S.busy||document.hidden)return;
-  const a=document.activeElement; if(a&&a.tagName==="INPUT"&&a.closest(".grid"))return;
-  try{if(await pull())render()}catch(e){}
+  if(pend.length){if(!flushing)flush();return;}
+  const a=document.activeElement;if(a&&a.tagName==="INPUT"&&a.closest(".grid"))return;
+  try{if(await pull())render()}catch(e){S.err="Synchronisation indisponible : "+e.message}
 }
 function start(){
-  localStorage.removeItem("trg");
-  if(DEMO){try{S.launches=JSON.parse(localStorage.getItem("trgdemo")||"[]")}catch(e){}}
-  else if(S.user)pull().then(render).catch(e=>{S.err="Connexion impossible à GitHub : "+e.message;render()});
-  render();
-  setInterval(poll,5000);
+  try{const x=JSON.parse(sessionStorage.getItem("trg_session")||"null");if(x){S.user=x.u;S.token=x.t;S.admin=!!x.admin}}catch(e){}
+  if(S.user)api("/api/me").then(d=>{S.user=d.user;S.admin=d.admin;return pull()}).then(render).catch(e=>{logout(true)});
+  render();setInterval(poll,5000);
 }
 
 function createLaunch(f){
@@ -294,19 +214,22 @@ function delLaunch(id){
 /* ---------- Vues ---------- */
 function render(){
   const a=$("#app");
-  if(!CONFIGURED){a.innerHTML=head()+`<main><div class="warn"><b>Configuration Firebase manquante.</b> Ouvre index.html et colle l’adresse du script Google à la place de « COLLER_ICI ».</div></main>`;return}
+  if(!CONFIGURED){a.innerHTML=head()+`<main><div class="warn"><b>Configuration de l’API manquante.</b> Vérifie l’adresse du service alwaysdata.</div></main>`;return}
   if(!S.ready){a.innerHTML="";return}
-  if(!S.user&&!S.visitor){document.body.classList.remove("ro");a.innerHTML=head(false)+loginView();return}
+  if(!S.user&&!S.visitor){document.body.classList.remove("ro");a.innerHTML=loginView();return}
   const L=S.launches.find(l=>l.id===S.cur);
-  a.innerHTML=head(true)+tokenPanel()+`<main>${S.user===ADMIN_USER?`<div class="actions"><button class="btn alt" data-act="codes-toggle">⚙ Gérer les codes d’accès</button></div>${codesPanel()}`:""}${DEMO?`<div class="warn">Mode aperçu : les données restent sur cet appareil et ne sont pas partagées. Connexion avec n’importe quel code.</div>`:""}${S.err?`<div class="warn">${esc(S.err)}</div>`:""}${L?detail(L):list()}</main>`;
+  a.innerHTML=head(true)+`<main>${DEMO?`<div class="warn">Mode aperçu : les données restent sur cet appareil et ne sont pas partagées. Connexion avec n’importe quel code.</div>`:""}${S.err?`<div class="warn">${esc(S.err)}</div>`:""}${S.admin?`<div class="actions"><button class="btn alt" data-act="admin">Administration des comptes</button></div>`:""}${S.adminView?adminView():L?detail(L):list()}</main>`;
   document.body.classList.toggle("ro",S.visitor);
+  if(S.adminView)loadAdmin();
   if(S.visitor)document.querySelectorAll(".grid input,.grid select,.grid .chip").forEach(e=>e.disabled=true);
 }
-function head(auth){return `<header class="top"><img src="data:image/png;base64,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" alt="Trigano"><div><b style="font-size:17px">Suivi de lancements</b></div><button type="button" class="token-top" data-act="token-toggle">⚙ Token GitHub</button>${auth?`<div class="who"><b>${S.visitor?"Visiteur (lecture seule)":esc(S.user)}</b><button class="link" data-act="out">${S.visitor?"Se connecter":"Se déconnecter"}</button></div>`:""}</header>`}
-function loginView(){return `${tokenPanel()}<div class="login"><div class="hd"><img src="data:image/png;base64,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" alt="Trigano"></div><form class="bd" data-form="login">
+function head(auth){return `<header class="top"><img src="logo.png" alt="Trigano"><div><b style="font-size:17px">Suivi de lancements</b></div>${auth?`<div class="who"><b>${S.visitor?"Visiteur (lecture seule)":esc(S.user)}</b><button class="link" data-act="out">${S.visitor?"Se connecter":"Se déconnecter"}</button></div>`:""}</header>`}
+function loginView(){return `<div class="login"><div class="hd"><img src="logo.png" alt="Trigano"></div><form class="bd" data-form="login">
 <label class="f">Compte<select name="u">${USERS.map(u=>`<option>${esc(u)}</option>`).join("")}</select></label>
-<label class="f">Code d’accès personnel<input name="p" type="password" autocomplete="current-password" placeholder="Ton code d’accès"></label>
+<label class="f">Code d’accès<input name="p" type="password" autocomplete="current-password" required></label>
 <div class="err">${esc(S.err)}</div><button class="btn">Se connecter</button><button type="button" class="btn alt" data-act="visitor">Entrer en visiteur (lecture seule)</button></form></div>`}
+function adminView(){return `<div class="panel"><h2>Administration — validation des comptes</h2><p>Attribue un code d’au moins 8 caractères et autorise chaque utilisateur. Les visiteurs sont en lecture seule.</p><div id="admin-users">Chargement des comptes…</div></div>`}
+async function loadAdmin(){try{const d=await api("/api/admin/users");const a=$("#admin-users");if(!a)return;a.innerHTML=d.users.filter(u=>!u.admin).map(u=>`<form data-form="account" class="form" style="margin-bottom:12px;border-bottom:1px solid #ddd;padding-bottom:12px"><input type="hidden" name="user" value="${esc(u.name)}"><b>${esc(u.name)}${u.admin?" (Admin)":""}</b><label class="f">Nouveau code d’accès<input name="code" type="password" minlength="8" placeholder="8 caractères minimum, ou laisser vide"></label><label class="f">Autorisé<select name="enabled" ${u.admin?"disabled":""}><option value="true" ${u.enabled?"selected":""}>Oui</option><option value="false" ${!u.enabled?"selected":""}>Non</option></select></label><button class="btn" type="submit">Enregistrer</button></form>`).join("")}catch(e){toast(e.message)}}
 function list(){
   const ls=S.launches.filter(l=>l.line===S.line);
   return `<div class="tabs">${[6,7].map(n=>`<button class="tab ${S.line===n?"on":""}" data-act="line" data-v="${n}">Ligne ${n}</button>`).join("")}</div>
@@ -347,7 +270,7 @@ ${x.f==="avec"?`<div class="chips">${Object.entries(TYPES).map(([k,l])=>`<button
 function sheetHTML(L){
   const s=stats(L), now=new Date();
   const info=(l,v)=>`<div>${l}<b>${esc(v)}</b></div>`, box=(n,l)=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`;
-  return `<div class="sh"><img src="data:image/png;base64,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" alt="Trigano"><div><small>FEUILLE DE SUIVI DE LIGNE</small><h1>Ligne ${L.line}</h1></div></div>
+  return `<div class="sh"><img src="logo.png" alt="Trigano"><div><small>FEUILLE DE SUIVI DE LIGNE</small><h1>Ligne ${L.line}</h1></div></div>
 <div class="info">${info("LANCEMENT",L.num)}${info("QUANTITÉ À PRODUIRE",L.qty)}${info("CHÂSSIS SAISIS",s.n)}${info("ÉDITÉ LE",now.toLocaleDateString("fr-FR"))}${info("ÉDITÉ PAR",S.visitor?"Visiteur":S.user)}</div>
 <div class="stats">${box(s.ok,"Sorties validées")}${box(s.ko,"Non validées")}${box(s.com,"Com")}${box(s.pc,"Pas com")}${box(s.fm,"Faux manquants")}${box(s.left,"Restants à saisir")}</div>
 <div class="bar" style="margin-top:10px"><i style="width:${s.pct}%"></i></div><div style="font-size:12px;color:var(--mut);margin-top:4px">Avancement des sorties de ligne : ${s.pct} %</div>
@@ -359,33 +282,15 @@ ${rows(L).map(x=>`<tr><td>${x.i+1}</td><td><b>${esc(x.c)}</b></td><td>${fd(x.d)}
 <footer>Trigano – Suivi de ligne – Lancement ${esc(L.num)} – Document généré le ${now.toLocaleString("fr-FR")} par ${esc(S.visitor?"Visiteur":S.user)}</footer>`;
 }
 function prep(id){const L=S.launches.find(l=>l.id===id);$("#sheet").innerHTML=sheetHTML(L);return L}
-async function pvSave(name,data){
-  const d=window.claude?await claude.use("downloads"):null;
-  if(!d){toast("Téléchargement indisponible dans cet aperçu");return}
-  try{await d.save({filename:name,data});toast("Fichier enregistré")}catch(e){if(e.code!=="declined")toast("Enregistrement impossible")}
-}
 const logAct=(id,a)=>send({type:"log",id,a});
 
 /* ---------- Événements ---------- */
 document.addEventListener("click",async e=>{
   const b=e.target.closest("[data-act]"); if(!b)return;
   const act=b.dataset.act, id=b.dataset.id;
-  if(act==="codes-toggle"){$("#codesPanel").hidden=!$("#codesPanel").hidden;return}
-  if(act==="token-toggle"){$("#tokenPanel").hidden=!$("#tokenPanel").hidden;return}
-  if(act==="token-save"||act==="token-publish"){
-    const token=$("#tokenInput").value.trim(), msg=$("#tokenMessage");
-    if(!token){msg.textContent="Renseigne un token GitHub.";return}
-    if(act==="token-publish"){
-      msg.textContent="Publication en cours…";
-      try{await publishToken(token);msg.textContent="Publié ! Les autres appareils doivent actualiser le site après le déploiement GitHub Pages."}
-      catch(e){msg.textContent="Échec : "+e.message;return}
-    }else msg.textContent="Token enregistré sur cet appareil.";
-    localStorage.setItem("trg_token",token);S.token=token;S.etag="";
-    if(S.user)try{await pull()}catch(e){msg.textContent+=" Vérifie les droits du token."}
-    return;
-  }
   if(act==="line"){S.line=+b.dataset.v;render()}
-  else if(act==="visitor"){S.visitor=true;S.err="";S.etag="";try{await pull()}catch(e){S.err="Connexion impossible à GitHub.";S.visitor=false}render()}
+  else if(act==="admin"&&S.admin){S.adminView=!S.adminView;S.cur=null;render()}
+   else if(act==="visitor"){S.visitor=true;S.err="";try{await pull()}catch(e){S.err="Connexion impossible à CloudFive : "+e.message;S.visitor=false}render()}
   else if(act==="open"){S.cur=id;render();scrollTo(0,0)}
   else if(act==="back"){S.cur=null;render()}
   else if(act==="out"){logout()}
@@ -395,17 +300,13 @@ document.addEventListener("click",async e=>{
     const t=(x.t||[]).includes(k)?x.t.filter(v=>v!==k):[...(x.t||[]),k];
     upd(g.dataset.id,g.dataset.i,{t},`faux manquant ${t.length?t.map(v=>TYPES[v]).join(", "):"sans type"}`);
   }
-  else if(act==="print"){const L=prep(id);
-    {const css=document.querySelector("style").textContent;
-     pvSave(`Suivi-ligne${L.line}-lancement${L.num}.html`,`<!doctype html><html lang="fr"><meta charset="utf-8"><title>Suivi ligne ${L.line} - lancement ${L.num}</title><style>${css}</style><body><div class="sheet" style="position:static;width:auto">${$("#sheet").innerHTML}</div><script>onload=()=>setTimeout(print,400)<\/script>`);logAct(id,"Impression");return}
-const o=document.title;document.title=`Suivi ligne ${L.line} - lancement ${L.num}`;logAct(id,"Impression");setTimeout(()=>{print();document.title=o},150)}
+  else if(act==="print"){const L=prep(id);const o=document.title;document.title=`Suivi ligne ${L.line} - lancement ${L.num}`;logAct(id,"Impression");setTimeout(()=>{print();document.title=o},150)}
   else if(act==="img"){
     const L=prep(id); toast("Création de l’image…");
     const c=await html2canvas($("#sheet"),{scale:2,backgroundColor:"#fff"});
     c.toBlob(async blob=>{
       const f=new File([blob],`Suivi-ligne${L.line}-lancement${L.num}.png`,{type:"image/png"});
       logAct(id,"Image enregistrée / partagée");
-      if(DEMO){pvSave(f.name,blob);return}
       if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:`Suivi lancement ${L.num}`});return}catch(_){return}}
       const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=f.name;a.click();toast("Image téléchargée");
     });
@@ -415,7 +316,6 @@ const o=document.title;document.title=`Suivi ligne ${L.line} - lancement ${L.num
     const body=`Suivi ligne ${L.line} – lancement ${L.num}\nAvancement : ${s.pct} % (${s.ok}/${L.qty} sorties validées)\nCom : ${s.com} | Pas com : ${s.pc} | Faux manquants : ${s.fm}\n\n`+
       rows(L).map(x=>`${x.c} | ${fd(x.d)} | ${x.s==="ok"?"Validée":x.s==="ko"?"Non validée":"—"} | ${qualTxt(x)} | ${fmTxt(x)}`).join("\n")+`\n\nÉdité par ${S.visitor?"Visiteur":S.user} le ${new Date().toLocaleString("fr-FR")}`;
     logAct(id,"Envoi par e-mail");
-    if(DEMO){pvSave(`Suivi-ligne${L.line}-lancement${L.num}.txt`,body);return}
     location.href=`mailto:?subject=${encodeURIComponent(`Trigano – Suivi ligne ${L.line} – lancement ${L.num}`)}&body=${encodeURIComponent(body)}`;
   }
 });
@@ -433,24 +333,16 @@ document.addEventListener("change",e=>{
 document.addEventListener("submit",async e=>{
   const f=e.target; if(!f.dataset.form)return; e.preventDefault();
   if(f.dataset.form==="new"&&!S.visitor)createLaunch(f);
-  if(f.dataset.form==="code"){
-    const msg=$("#codesMessage"),u=f.elements.u.value,p=f.elements.p.value;
-    if(S.user!==ADMIN_USER){msg.textContent="Accès refusé";return}
-    if(p.length<4){msg.textContent="Code trop court (4 caractères minimum).";return}
-    msg.textContent="Enregistrement…";
-    try{await saveAccess(u,p);msg.textContent="Code modifié pour "+u+". Il sera demandé à la prochaine connexion.";f.reset()}
-    catch(err){msg.textContent="Erreur : "+err.message}
-    return;
-  }
+   if(f.dataset.form==="account"&&S.admin){try{await api("/api/admin/users",{method:"POST",body:JSON.stringify({user:f.elements.user.value,code:f.elements.code.value,enabled:f.elements.enabled.value!=="false"})});toast("Compte mis à jour");loadAdmin()}catch(e){toast("Erreur : "+e.message)}return}
   if(f.dataset.form==="login"){
-    S.err="";const u=f.u.value,t=getToken(),password=f.p.value;
+    S.err="";const u=f.u.value,t=f.p.value.trim();
     try{
-      if(!t){S.err="Clique sur ⚙ Token GitHub en haut à droite pour renseigner le token.";render();return}
-       if(!DEMO){const r=await fetch("https://api.github.com/repos/"+REPO,{headers:{Authorization:"Bearer "+t,Accept:"application/vnd.github+json"},cache:"no-store"});if(!r.ok)throw new Error("auth")}
-      const access=await loadAccess(t);
-      if(access.codes[u] && await codeHash(password)!==access.codes[u])throw new Error("code");
-      S.user=u;S.token=t;S.etag="";localStorage.removeItem("trg");await pull();render()
-    }catch(e){S.user=null;S.token="";S.err=e.message==="code"?"Code d’accès incorrect.":e.message==="auth"?"Token GitHub invalide ou sans accès au dépôt.":"Connexion impossible à GitHub : "+e.message;render()}
+      const d=await api("/api/login",{method:"POST",body:JSON.stringify({user:u,code:t})});
+      S.user=d.user;S.token=d.token;S.admin=!!d.admin;S.visitor=false;
+      sessionStorage.setItem("trg_session",JSON.stringify({u:S.user,t:S.token,admin:S.admin}));
+      await pull();render();
+    }catch(e){S.user=null;S.admin=false;S.token="";sessionStorage.removeItem("trg_session");S.err="Connexion refusée : "+e.message;render()}
+
   }
 });
 start();
